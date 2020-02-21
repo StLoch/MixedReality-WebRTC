@@ -47,5 +47,5 @@ namespace Microsoft.MixedReality.WebRTC
     /// and is ready for consumption.
     /// </summary>
     /// <param name="frame">The newly available audio frame.</param>
-    public delegate void AudioFrameDelegate(AudioFrame frame);
+    public delegate void AudioFrameDelegate(in AudioFrame frame);
 }

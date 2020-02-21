@@ -6,6 +6,7 @@
 #include "pch.h"
 
 #include "audio_frame_observer.h"
+#include "common_audio/resampler/include/resampler.h"
 #include "data_channel.h"
 #include "media/local_video_track.h"
 #include "peer_connection.h"
@@ -105,7 +106,6 @@ void PeerConnection::SetFrameHeightRoundMode(FrameHeightRoundMode value) {
 
 namespace Microsoft::MixedReality::WebRTC {
 void PeerConnection::SetFrameHeightRoundMode(FrameHeightRoundMode /*value*/) {}
-
 }  // namespace Microsoft::MixedReality::WebRTC
 
 #endif
@@ -146,16 +146,222 @@ Microsoft::MixedReality::WebRTC::Error ErrorFromRTCError(
       ResultFromRTCErrorType(error.type()), error.message());
 }
 
+class StatsReceiver {
+ public:
+  virtual void OnStatsUpdated() = 0;
+};
+
+class SimpleStatsObserver : public webrtc::StatsObserver {
+ public:
+  SimpleStatsObserver(StatsReceiver* impl)
+      : impl_(impl), called_(false), stats_() {}
+  virtual ~SimpleStatsObserver() {}
+
+  virtual void OnComplete(const webrtc::StatsReports& reports) {
+    called_ = true;
+    stats_.Clear();
+    stats_.number_of_reports = reports.size();
+    for (const auto* r : reports) {
+      if (r->type() == webrtc::StatsReport::kStatsReportTypeSsrc) {
+        // This is actually per track, so multiple tracks will break the current
+        // setup.
+        stats_.timestamp = r->timestamp();
+
+        std::string media_type;
+        GetStringValue(r, webrtc::StatsReport::kStatsValueNameMediaType,
+                       &media_type);
+
+        int audio_output_level = -1;
+        if (GetIntValue(r, webrtc::StatsReport::kStatsValueNameAudioOutputLevel,
+                        &audio_output_level)) {
+          stats_.audio_output_level =
+              std::max(stats_.audio_output_level, audio_output_level);
+        }
+
+        int audio_input_level = -1;
+        if (GetIntValue(r, webrtc::StatsReport::kStatsValueNameAudioInputLevel,
+                        &audio_input_level)) {
+          stats_.audio_input_level =
+              std::max(stats_.audio_input_level, audio_input_level);
+        }
+
+        int bytes_received = -1;
+        if (GetIntValue(r, webrtc::StatsReport::kStatsValueNameBytesReceived,
+                        &bytes_received)) {
+          stats_.bytes_received += bytes_received;
+        }
+
+        int bytes_sent = -1;
+        if (GetIntValue(r, webrtc::StatsReport::kStatsValueNameBytesSent,
+                        &bytes_sent)) {
+          stats_.bytes_sent += bytes_sent;
+        }
+
+        int rtt = -1;
+        if (GetIntValue(r, webrtc::StatsReport::kStatsValueNameRtt, &rtt)) {
+          stats_.rtt = std::max(stats_.rtt, rtt);
+        }
+      } else if (r->type() == webrtc::StatsReport::kStatsReportTypeBwe) {
+        // Global (all tracks) bandwidth estimation values.
+        stats_.timestamp = r->timestamp();
+
+        // Estimated send bandwidth (bits per second)
+        GetIntValue(r,
+                    webrtc::StatsReport::kStatsValueNameAvailableSendBandwidth,
+                    &stats_.available_send_bandwidth);
+
+        // Estimated receive bandwidth (bits per second)
+        GetIntValue(
+            r, webrtc::StatsReport::kStatsValueNameAvailableReceiveBandwidth,
+            &stats_.available_receive_bandwidth);
+
+        // The targeted bitrate for encoding (bits per second)
+        GetIntValue(r, webrtc::StatsReport::kStatsValueNameTargetEncBitrate,
+                    &stats_.target_encode_bitrate);
+
+        // The bitrate we actually end up encoding at (bits per second)
+        GetIntValue(r, webrtc::StatsReport::kStatsValueNameActualEncBitrate,
+                    &stats_.actual_encode_bitrate);
+
+        // Data actually transmitted (bits per second)
+        GetIntValue(r, webrtc::StatsReport::kStatsValueNameTransmitBitrate,
+                    &stats_.transmit_bitrate);
+      }
+    }
+
+    impl_->OnStatsUpdated();
+  }
+
+  bool called() const { return called_; }
+  size_t number_of_reports() const { return stats_.number_of_reports; }
+  double timestamp() const { return stats_.timestamp; }
+
+  int AudioOutputLevel() const {
+    RTC_CHECK(called_);
+    return stats_.audio_output_level;
+  }
+
+  int AudioInputLevel() const {
+    RTC_CHECK(called_);
+    return stats_.audio_input_level;
+  }
+
+  int BytesReceived() const {
+    RTC_CHECK(called_);
+    return stats_.bytes_received;
+  }
+
+  int BytesSent() const {
+    RTC_CHECK(called_);
+    return stats_.bytes_sent;
+  }
+
+  int RountTripTime() const {
+    RTC_CHECK(called_);
+    return stats_.rtt;
+  }
+
+  int AvailableReceiveBandwidth() const {
+    RTC_CHECK(called_);
+    return stats_.available_receive_bandwidth;
+  }
+
+  int AvailableSendBandwidth() const {
+    RTC_CHECK(called_);
+    return stats_.available_send_bandwidth;
+  }
+
+  int TargetEncodeBitrate() const {
+    RTC_CHECK(called_);
+    return stats_.target_encode_bitrate;
+  }
+
+  int ActualEncodeBitrate() const {
+    RTC_CHECK(called_);
+    return stats_.actual_encode_bitrate;
+  }
+
+  int TransmitBitrate() const {
+    RTC_CHECK(called_);
+    return stats_.transmit_bitrate;
+  }
+
+ private:
+  bool GetIntValue(const webrtc::StatsReport* report,
+                   webrtc::StatsReport::StatsValueName name,
+                   int* value) {
+    const webrtc::StatsReport::Value* v = report->FindValue(name);
+    if (v) {
+      // TODO(tommi): We should really just be using an int here :-/
+      *value = rtc::FromString<int>(v->ToString());
+    }
+    return v != nullptr;
+  }
+
+  bool GetInt64Value(const webrtc::StatsReport* report,
+                     webrtc::StatsReport::StatsValueName name,
+                     int64_t* value) {
+    const webrtc::StatsReport::Value* v = report->FindValue(name);
+    if (v) {
+      // TODO(tommi): We should really just be using an int here :-/
+      *value = rtc::FromString<int64_t>(v->ToString());
+    }
+    return v != nullptr;
+  }
+
+  bool GetStringValue(const webrtc::StatsReport* report,
+                      webrtc::StatsReport::StatsValueName name,
+                      std::string* value) {
+    const webrtc::StatsReport::Value* v = report->FindValue(name);
+    if (v)
+      *value = v->ToString();
+    return v != nullptr;
+  }
+  StatsReceiver* impl_;
+  bool called_;
+  struct {
+    void Clear() {
+      number_of_reports = 0;
+      timestamp = 0;
+      audio_output_level = 0;
+      audio_input_level = 0;
+      bytes_received = 0;
+      bytes_sent = 0;
+      rtt = 0;
+      available_send_bandwidth = 0;
+      available_receive_bandwidth = 0;
+      target_encode_bitrate = 0;
+      actual_encode_bitrate = 0;
+      transmit_bitrate = 0;
+    }
+
+    size_t number_of_reports;
+    double timestamp;
+    int audio_output_level;
+    int audio_input_level;
+    int bytes_received;
+    int bytes_sent;
+    int rtt;
+    int available_send_bandwidth;
+    int available_receive_bandwidth;
+    int target_encode_bitrate;
+    int actual_encode_bitrate;
+    int transmit_bitrate;
+  } stats_;
+};
+
 /// Implementation of PeerConnection, which also implements
 /// PeerConnectionObserver at the same time to simplify interaction with
 /// the underlying implementation object.
 class PeerConnectionImpl : public PeerConnection,
-                           public webrtc::PeerConnectionObserver {
+                           public webrtc::PeerConnectionObserver,
+                           public StatsReceiver {
  public:
   mrsPeerConnectionInteropHandle hhh;
 
   PeerConnectionImpl(mrsPeerConnectionInteropHandle interop_handle)
-      : interop_handle_(interop_handle) {
+      : interop_handle_(interop_handle),
+        stats_observer_(new rtc::RefCountedObject<SimpleStatsObserver>(this)) {
     GlobalFactory::Instance()->AddObject(ObjectType::kPeerConnection, this);
   }
 
@@ -208,9 +414,12 @@ class PeerConnectionImpl : public PeerConnection,
   bool AddIceCandidate(const char* sdp_mid,
                        const int sdp_mline_index,
                        const char* candidate) noexcept override;
+
   bool SetRemoteDescriptionAsync(const char* type,
                                  const char* sdp,
                                  Callback<> callback) noexcept override;
+
+  bool SetLocalDescription(const char* type, const char* sdp) noexcept override;
 
   void RegisterConnectedCallback(
       ConnectedCallback&& callback) noexcept override {
@@ -230,6 +439,39 @@ class PeerConnectionImpl : public PeerConnection,
   bool CreateAnswer() noexcept override;
   void Close() noexcept override;
   bool IsClosed() const noexcept override;
+
+  void StartGetStats() noexcept override {
+    if (!IsClosed()) {
+      peer_->GetStats(
+          stats_observer_, nullptr,
+          webrtc::PeerConnectionInterface::kStatsOutputLevelStandard);
+    }
+  }
+
+  virtual void OnStatsUpdated() override {
+    auto lock = std::scoped_lock{get_stats_callback_mutex_};
+    StatsData args;
+    args.timestamp_ms = stats_observer_->timestamp();
+    args.bytes_sent = stats_observer_->BytesSent();
+    args.bytes_received = stats_observer_->BytesReceived();
+    args.rtt_ms = stats_observer_->RountTripTime();
+    args.available_send_bandwidth_bps =
+        stats_observer_->AvailableSendBandwidth();
+    args.available_receive_bandwidth_bps =
+        stats_observer_->AvailableReceiveBandwidth();
+    args.target_encode_bps = stats_observer_->TargetEncodeBitrate();
+    args.actual_encode_bps = stats_observer_->ActualEncodeBitrate();
+    args.transmit_encode_bps = stats_observer_->TransmitBitrate();
+    args.audio_input_level = stats_observer_->AudioInputLevel();
+    args.audio_output_level = stats_observer_->AudioOutputLevel();
+    get_stats_callback_(args);
+  }
+
+  void RegisterStatsUpdatedCallback(
+      StatsUpdatedCallback&& callback) noexcept override {
+    auto lock = std::scoped_lock{get_stats_callback_mutex_};
+    get_stats_callback_ = std::move(callback);
+  }
 
   void RegisterTrackAddedCallback(
       TrackAddedCallback&& callback) noexcept override {
@@ -373,6 +615,8 @@ class PeerConnectionImpl : public PeerConnection,
   rtc::scoped_refptr<webrtc::PeerConnectionInterface> peer_;
 
  protected:
+  rtc::scoped_refptr<SimpleStatsObserver> stats_observer_;
+
   /// Peer connection name assigned by the user. This has no meaning for the
   /// implementation.
   std::string name_;
@@ -421,6 +665,10 @@ class PeerConnectionImpl : public PeerConnection,
       RTC_GUARDED_BY(renegotiation_needed_callback_mutex_);
 
   /// User callback invoked when a remote audio or video track is added.
+  StatsUpdatedCallback get_stats_callback_
+      RTC_GUARDED_BY(get_stats_callback_mutex_);
+
+  /// User callback invoked when a remote audio or video track is added.
   TrackAddedCallback track_added_callback_
       RTC_GUARDED_BY(track_added_callback_mutex_);
 
@@ -436,6 +684,7 @@ class PeerConnectionImpl : public PeerConnection,
   std::mutex ice_state_changed_callback_mutex_;
   std::mutex ice_gathering_state_changed_callback_mutex_;
   std::mutex renegotiation_needed_callback_mutex_;
+  std::mutex get_stats_callback_mutex_;
   std::mutex track_added_callback_mutex_;
   std::mutex track_removed_callback_mutex_;
 
@@ -636,6 +885,7 @@ webrtc::RTCError PeerConnectionImpl::RemoveLocalVideoTrack(
     video_track.RemoveFromPeerConnection(*peer_);
   }
   local_video_tracks_.erase(it);
+
   return webrtc::RTCError::OK();
 }
 
@@ -1029,6 +1279,35 @@ bool PeerConnectionImpl::SetRemoteDescriptionAsync(
   return true;
 }
 
+bool PeerConnectionImpl::SetLocalDescription(const char* type,
+                                             const char* sdp) noexcept {
+  if (!peer_) {
+    return false;
+  }
+  {
+    auto lock = std::scoped_lock{data_channel_mutex_};
+    if (data_channels_.empty()) {
+      sctp_negotiated_ = false;
+    }
+  }
+  std::string sdp_type_str(type);
+  auto sdp_type = webrtc::SdpTypeFromString(sdp_type_str);
+  if (!sdp_type.has_value())
+    return false;
+  std::string local_desc(sdp);
+  webrtc::SdpParseError error;
+  std::unique_ptr<webrtc::SessionDescriptionInterface> session_description(
+      webrtc::CreateSessionDescription(sdp_type.value(), local_desc, &error));
+  if (!session_description)
+    return false;
+
+  rtc::scoped_refptr<webrtc::SetSessionDescriptionObserver> observer =
+      new rtc::RefCountedObject<SessionDescObserver>();
+
+  peer_->SetLocalDescription(observer, session_description.release());
+  return true;
+}
+
 void PeerConnectionImpl::OnSignalingChange(
     webrtc::PeerConnectionInterface::SignalingState new_state) noexcept {
   // See https://w3c.github.io/webrtc-pc/#rtcsignalingstate-enum
@@ -1368,6 +1647,202 @@ ErrorOr<RefPtr<PeerConnection>> PeerConnection::create(
 
 void PeerConnection::GetStats(webrtc::RTCStatsCollectorCallback* callback) {
   ((PeerConnectionImpl*)this)->peer_->GetStats(callback);
+}
+
+void AudioReadStream::audioFrameCallback(const void* audio_data,
+                                         const uint32_t bits_per_sample,
+                                         const uint32_t sample_rate,
+                                         const uint32_t number_of_channels,
+                                         const uint32_t number_of_frames) {
+  std::lock_guard<std::mutex> lock(frames_mutex_);
+  // maintain buffering limits, after adding this frame
+  const size_t maxFrames = std::max(buffer_ms_ / 10, 1);
+  while (frames_.size() > maxFrames) {
+    frames_.pop_front();
+  }
+  // add the new frame
+  auto& frame = frames_.emplace_back();
+  frame.bits_per_sample = bits_per_sample;
+  frame.sample_rate = sample_rate;
+  frame.number_of_channels = number_of_channels;
+  frame.number_of_frames = number_of_frames;
+  size_t size =
+      (size_t)(bits_per_sample / 8) * number_of_channels * number_of_frames;
+  auto src_bytes = static_cast<const std::byte*>(audio_data);
+  frame.audio_data.insert(frame.audio_data.begin(), src_bytes,
+                          src_bytes + size);
+}
+
+void AudioReadStream::staticAudioFrameCallback(void* user_data,
+                                               const AudioFrame& frame) {
+  auto ars = static_cast<AudioReadStream*>(user_data);
+  ars->audioFrameCallback(frame.data_, frame.bits_per_sample_,
+                          frame.sampling_rate_hz_, frame.channel_count_,
+                          frame.sample_count_);
+}
+
+AudioReadStream::AudioReadStream(PeerConnection* peer, int bufferMs)
+    : peer_(peer),
+      buffer_ms_(bufferMs >= 10 ? bufferMs : 500 /*TODO good value?*/) {
+  peer->RegisterRemoteAudioFrameCallback(
+      AudioFrameReadyCallback{&staticAudioFrameCallback, this});
+}
+
+AudioReadStream::~AudioReadStream() {
+  peer_->RegisterRemoteAudioFrameCallback(AudioFrameReadyCallback{});
+}
+
+AudioReadStream::Buffer::Buffer() {
+  resampler_ = std::make_unique<webrtc::Resampler>();
+}
+AudioReadStream::Buffer::~Buffer() {}
+
+void AudioReadStream::Buffer::addFrame(const Frame& frame,
+                                       int dstSampleRate,
+                                       int dstChannels) {
+  // We may require up to 2 intermediate buffers
+  // We always write into buffer_next and then swap front/back buffers
+  std::vector<short> buffer_front;
+  std::vector<short> buffer_back;
+
+  // tmpData will eventually hold u16 data with the correct number of channels
+  const short* srcData;
+  size_t srcCount;
+
+  // promote to 16 bit
+  if (frame.bits_per_sample == 16) {
+    srcData = (short*)frame.audio_data.data();
+    srcCount = frame.number_of_frames * frame.number_of_channels;
+  } else if (frame.bits_per_sample == 8) {
+    buffer_front.resize(frame.audio_data.size());
+    short* data = buffer_front.data();
+    for (int i = 0; i < (int)frame.audio_data.size(); ++i) {
+      data[i] = ((int)frame.audio_data[i] * 256) - 32768;
+    }
+    srcData = data;
+    srcCount = buffer_front.size();
+    swap(buffer_front, buffer_back);
+  } else {
+    assert(false);
+    return;
+  }
+
+  // match number of channels
+  switch (frame.number_of_channels * 16 + dstChannels) {
+    case 0x11:
+    case 0x22:
+      break;      // nop
+    case 0x12: {  // duplicate
+      buffer_front.resize(srcCount * 2);
+      short* data = buffer_front.data();
+      for (int i = 0; i < (int)srcCount; ++i) {
+        data[2 * i + 0] = srcData[i];
+        data[2 * i + 1] = srcData[i];
+      }
+      srcData = data;
+      srcCount = buffer_front.size();
+      swap(buffer_front, buffer_back);
+      break;
+    }
+    case 0x21: {  // average L&R
+      buffer_front.resize(srcCount / 2);
+      short* data = buffer_front.data();
+      for (int i = 0; i < (int)srcCount; ++i) {
+        data[i] = (srcData[2 * i] + srcData[2 * i + 1]) / 2;
+      }
+      srcData = data;
+      srcCount = buffer_front.size();
+      swap(buffer_front, buffer_back);
+      break;
+    }
+    default:
+      assert(false);
+      return;
+  }
+
+  // match sample rate
+  if ((int)frame.sample_rate != dstSampleRate) {
+    buffer_front.resize((srcCount * dstSampleRate / frame.sample_rate) + 1);
+    short* data = buffer_front.data();
+
+    resampler_->ResetIfNeeded(frame.sample_rate, dstSampleRate, dstChannels);
+    size_t count;
+    resampler_->Push(srcData, srcCount, data, buffer_front.size(), count);
+    srcData = data;
+    srcCount = count;
+    swap(buffer_front, buffer_back);
+  }
+
+  // Convert s16 to f32
+  data_.resize(srcCount);
+  for (size_t i = 0; i < srcCount; ++i) {
+    data_[i] = (float)srcData[i] / 32768.0f;
+  }
+  used_ = 0;
+  channels_ = dstChannels;
+  rate_ = dstSampleRate;
+}
+
+void AudioReadStream::Read(int sampleRate,
+                           float dataOrig[],
+                           int dataLenOrig,
+                           int channels) noexcept {
+  float* dst = dataOrig;
+  int dstLen = dataLenOrig;  // number of points remaining
+
+  // TODO: to make the logic simpler, we currently match the expected number of
+  // output
+  // channels in buffer_.addFrame(). We could save a bit of work and memory by
+  // moving any 1->2 channel conversions into buffer_.readSome().
+
+  while (dstLen > 0) {
+    // format matches, fill some from the buffer. If the format doesn't
+    // match we will fall through and ensure the next frame matches. This
+    // may drop some data but will only happen when the output
+    // sampleRate/channels change (i.e. rarely)
+    if (sampleRate == buffer_.rate_ && channels == buffer_.channels_ &&
+        buffer_.available()) {
+      int len = buffer_.readSome(dst, dstLen);
+      dst += len;
+      dstLen -= len;
+    } else {
+#if 1
+      Frame frame;
+      bool haveFrame = false;
+      {
+        std::unique_lock<std::mutex> lock(frames_mutex_);
+        if (!frames_.empty()) {
+          frame = std::move(frames_.front());
+          frames_.pop_front();
+          haveFrame = true;
+        }
+      }
+      if (haveFrame) {
+        buffer_.addFrame(frame, sampleRate, channels);
+      } else {
+        memset(dst, 0, dstLen);        
+      }
+#else
+      Frame frame;
+      {
+        std::unique_lock<std::mutex> lock(frames_mutex_);
+        if (frames_.empty()) {
+          lock.unlock();
+          memset(dst, 0, dstLen);
+          return;  // and return
+        }
+        Frame& f = frames_.front();
+        frame.audio_data.swap(f.audio_data);
+        frame.bits_per_sample = f.bits_per_sample;
+        frame.sample_rate = f.sample_rate;
+        frame.number_of_channels = f.number_of_channels;
+        frame.number_of_frames = f.number_of_frames;
+        frames_.pop_front();
+      }
+      buffer_.addFrame(frame, sampleRate, channels);
+#endif
+    }
+  }
 }
 
 }  // namespace Microsoft::MixedReality::WebRTC

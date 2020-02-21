@@ -70,6 +70,7 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         private delegate void IceStateChangedDelegate(IntPtr peer, IceConnectionState newState);
         private delegate void IceGatheringStateChangedDelegate(IntPtr peer, IceGatheringState newState);
         private delegate void RenegotiationNeededDelegate(IntPtr peer);
+        private delegate void GetStatsDelegate(IntPtr peer, ref PeerConnection.StatsData stats);
         private delegate void TrackAddedDelegate(IntPtr peer, PeerConnection.TrackKind trackKind);
         private delegate void TrackRemovedDelegate(IntPtr peer, PeerConnection.TrackKind trackKind);
         private delegate void DataChannelMessageDelegate(IntPtr peer, IntPtr data, ulong size);
@@ -162,6 +163,7 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             public PeerConnectionIceStateChangedCallback IceStateChangedCallback;
             public PeerConnectionIceGatheringStateChangedCallback IceGatheringStateChangedCallback;
             public PeerConnectionRenegotiationNeededCallback RenegotiationNeededCallback;
+            public PeerConnectionStatsUpdatedCallback StatsUpdatedCallback;
             public PeerConnectionTrackAddedCallback TrackAddedCallback;
             public PeerConnectionTrackRemovedCallback TrackRemovedCallback;
             public LocalVideoTrackInterop.I420AVideoFrameUnmanagedCallback I420ALocalVideoFrameCallback;
@@ -234,6 +236,13 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             peer.OnRenegotiationNeeded();
         }
 
+        [MonoPInvokeCallback(typeof(GetStatsDelegate))]
+        public static void StatsUpdatedCallback(IntPtr userData, ref PeerConnection.StatsData stats)
+        {
+            var peer = Utils.ToWrapper<PeerConnection>(userData);
+            peer.OnStatsUpdated(in stats);
+        }
+
         [MonoPInvokeCallback(typeof(TrackAddedDelegate))]
         public static void TrackAddedCallback(IntPtr userData, PeerConnection.TrackKind trackKind)
         {
@@ -252,28 +261,28 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         public static void I420ARemoteVideoFrameCallback(IntPtr userData, ref I420AVideoFrame frame)
         {
             var peer = Utils.ToWrapper<PeerConnection>(userData);
-            peer.OnI420ARemoteVideoFrameReady(frame);
+            peer.OnI420ARemoteVideoFrameReady(in frame);
         }
 
         [MonoPInvokeCallback(typeof(LocalVideoTrackInterop.Argb32VideoFrameUnmanagedCallback))]
         public static void Argb32RemoteVideoFrameCallback(IntPtr userData, ref Argb32VideoFrame frame)
         {
             var peer = Utils.ToWrapper<PeerConnection>(userData);
-            peer.OnArgb32RemoteVideoFrameReady(frame);
+            peer.OnArgb32RemoteVideoFrameReady(in frame);
         }
 
         [MonoPInvokeCallback(typeof(AudioFrameUnmanagedCallback))]
         public static void LocalAudioFrameCallback(IntPtr userData, ref AudioFrame frame)
         {
             var peer = Utils.ToWrapper<PeerConnection>(userData);
-            peer.OnLocalAudioFrameReady(frame);
+            peer.OnLocalAudioFrameReady(in frame);
         }
 
         [MonoPInvokeCallback(typeof(AudioFrameUnmanagedCallback))]
         public static void RemoteAudioFrameCallback(IntPtr userData, ref AudioFrame frame)
         {
             var peer = Utils.ToWrapper<PeerConnection>(userData);
-            peer.OnRemoteAudioFrameReady(frame);
+            peer.OnRemoteAudioFrameReady(in frame);
         }
 
         public static readonly PeerConnectionSimpleStatsCallback SimpleStatsReportDelegate = SimpleStatsReportCallback;
@@ -469,6 +478,9 @@ namespace Microsoft.MixedReality.WebRTC.Interop
         public delegate void PeerConnectionRenegotiationNeededCallback(IntPtr userData);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+        public delegate void PeerConnectionStatsUpdatedCallback(IntPtr userData, ref PeerConnection.StatsData data);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
         public delegate void PeerConnectionTrackAddedCallback(IntPtr userData, PeerConnection.TrackKind trackKind);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
@@ -490,6 +502,10 @@ namespace Microsoft.MixedReality.WebRTC.Interop
 
 
         #region P/Invoke static functions
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+    EntryPoint = "mrsSetLogLevel")]
+        public static extern void SetLogLevel(LoggingSeverity level);
 
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsEnumVideoCaptureDevicesAsync")]
@@ -549,6 +565,15 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             EntryPoint = "mrsPeerConnectionRegisterRenegotiationNeededCallback")]
         public static extern void PeerConnection_RegisterRenegotiationNeededCallback(PeerConnectionHandle peerHandle,
             PeerConnectionRenegotiationNeededCallback callback, IntPtr userData);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionStartGetStats")]
+        public static extern void PeerConnection_StartGetStats(PeerConnectionHandle peerHandle);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionRegisterStatsUpdatedCallback")]
+        public static extern void PeerConnection_RegisterStatsUpdatedCallback(PeerConnectionHandle peerHandle,
+            PeerConnectionStatsUpdatedCallback callback, IntPtr userData);
 
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionRegisterTrackAddedCallback")]
@@ -658,6 +683,10 @@ namespace Microsoft.MixedReality.WebRTC.Interop
             EntryPoint = "mrsPeerConnectionSetRemoteDescriptionAsync")]
         public static extern uint PeerConnection_SetRemoteDescriptionAsync(PeerConnectionHandle peerHandle,
             string type, string sdp, ActionDelegate callback, IntPtr callbackArgs);
+
+        [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
+            EntryPoint = "mrsPeerConnectionSetLocalDescription")]
+        public static extern uint PeerConnection_SetLocalDescription(PeerConnectionHandle peerHandle, string type, string sdp);
 
         [DllImport(Utils.dllPath, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi,
             EntryPoint = "mrsPeerConnectionClose")]

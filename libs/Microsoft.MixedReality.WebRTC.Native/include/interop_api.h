@@ -63,6 +63,8 @@ using mrsVideoCaptureDeviceEnumCallback = void(MRS_CALL*)(const char* id,
 using mrsVideoCaptureDeviceEnumCompletedCallback =
     void(MRS_CALL*)(void* user_data);
 
+MRS_API void MRS_CALL mrsSetLogLevel(int level);
+
 /// Enumerate the video capture devices asynchronously.
 /// For each device found, invoke the mandatory |callback|.
 /// At the end of the enumeration, invoke the optional |completedCallback| if it
@@ -111,6 +113,9 @@ using DataChannelHandle = void*;
 /// Opaque handle to a native ExternalVideoTrackSource C++ object.
 using ExternalVideoTrackSourceHandle = void*;
 
+/// Opaque handle to a native AudioReadStream C++ object.
+using AudioReadStreamHandle = void*;
+
 /// Callback fired when the peer connection is connected, that is it finished
 /// the JSEP offer/answer exchange successfully.
 using PeerConnectionConnectedCallback = void(MRS_CALL*)(void* user_data);
@@ -157,6 +162,23 @@ using PeerConnectionIceStateChangedCallback =
 /// account for new parameters (e.g. added or removed tracks).
 using PeerConnectionRenegotiationNeededCallback =
     void(MRS_CALL*)(void* user_data);
+
+
+struct StatsData  {
+  double timestamp_ms;
+  int bytes_sent;
+  int bytes_received;
+  int rtt_ms;
+  int available_send_bandwidth_bps;
+  int available_receive_bandwidth_bps;
+  int target_encode_bps;
+  int actual_encode_bps;
+  int transmit_encode_bps;
+  int audio_input_level;
+  int audio_output_level;
+};
+
+using PeerConnectionStatsUpdatedCallback = void(MRS_CALL*)(void* user_data, const StatsData& stats);
 
 /// Kind of media track. Equivalent to
 /// webrtc::MediaStreamTrackInterface::kind().
@@ -331,6 +353,18 @@ MRS_API void MRS_CALL mrsPeerConnectionRegisterRenegotiationNeededCallback(
     PeerConnectionHandle peerHandle,
     PeerConnectionRenegotiationNeededCallback callback,
     void* user_data) noexcept;
+
+/// Register a callback fired when a remote media track is added to the current
+/// peer connection.
+MRS_API void MRS_CALL mrsPeerConnectionRegisterStatsUpdatedCallback(
+    PeerConnectionHandle peerHandle,
+    PeerConnectionStatsUpdatedCallback callback,
+    void* user_data) noexcept;
+
+/// Register a callback fired when a remote media track is added to the current
+/// peer connection.
+MRS_API void MRS_CALL mrsPeerConnectionStartGetStats(
+    PeerConnectionHandle peerHandle) noexcept;
 
 /// Register a callback fired when a remote media track is added to the current
 /// peer connection.
@@ -567,6 +601,21 @@ MRS_API mrsResult MRS_CALL mrsPeerConnectionRemoveLocalVideoTrack(
 MRS_API void MRS_CALL mrsPeerConnectionRemoveLocalAudioTrack(
     PeerConnectionHandle peerHandle) noexcept;
 
+MRS_API mrsResult MRS_CALL
+mrsAudioReadStreamCreate(PeerConnectionHandle peerHandle,
+                         int bufferMs,
+                         AudioReadStreamHandle* readStreamOut);
+
+MRS_API mrsResult MRS_CALL
+mrsAudioReadStreamRead(AudioReadStreamHandle readStream,
+                       int sampleRate,
+                       float data[],
+                       int dataLen,
+                       int numChannels);
+
+MRS_API void MRS_CALL
+mrsAudioReadStreamDestroy(AudioReadStreamHandle readStream);
+
 MRS_API mrsResult MRS_CALL mrsPeerConnectionRemoveDataChannel(
     PeerConnectionHandle peerHandle,
     DataChannelHandle dataChannelHandle) noexcept;
@@ -632,6 +681,13 @@ mrsPeerConnectionSetRemoteDescriptionAsync(PeerConnectionHandle peerHandle,
                                            const char* sdp,
                                            ActionCallback callback,
                                            void* user_data) noexcept;
+
+/// Set a remote description received from a remote peer via the signaling
+/// service.
+MRS_API mrsResult MRS_CALL
+mrsPeerConnectionSetLocalDescription(PeerConnectionHandle peerHandle,
+                                      const char* type,
+                                      const char* sdp) noexcept;
 
 /// Close a peer connection, removing all tracks and disconnecting from the
 /// remote peer currently connected. This does not invalidate the handle nor

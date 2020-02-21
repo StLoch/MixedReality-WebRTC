@@ -283,16 +283,16 @@ namespace Microsoft.MixedReality.WebRTC
             _nativeHandle.Dispose();
         }
 
-        internal void OnI420AFrameReady(I420AVideoFrame frame)
+        internal void OnI420AFrameReady(in I420AVideoFrame frame)
         {
             MainEventSource.Log.I420ALocalVideoFrameReady(frame.width, frame.height);
-            I420AVideoFrameReady?.Invoke(frame);
+            I420AVideoFrameReady?.Invoke(in frame);
         }
 
-        internal void OnArgb32FrameReady(Argb32VideoFrame frame)
+        internal void OnArgb32FrameReady(in Argb32VideoFrame frame)
         {
             MainEventSource.Log.Argb32LocalVideoFrameReady(frame.width, frame.height);
-            Argb32VideoFrameReady?.Invoke(frame);
+            Argb32VideoFrameReady?.Invoke(in frame);
         }
 
         internal void OnTrackRemoved(PeerConnection previousConnection)

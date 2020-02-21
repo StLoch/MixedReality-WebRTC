@@ -7,62 +7,78 @@ using System.Diagnostics;
 namespace Microsoft.MixedReality.WebRTC
 {
     /// <summary>
-    /// Utility to manage a moving average of a time series.
+    /// A constant time moving average 
     /// </summary>
     public class MovingAverage
     {
-        /// <summary>
-        /// Number of samples in the moving average window.
-        /// </summary>
-        public int Capacity { get; }
+        private float[] window;
+        private float total;
+        private int numSamples;
+        private int insertionIndex;
+        private int period;
 
         /// <summary>
-        /// Average value of the samples.
+        /// Creates a moving average with a fixed period.
         /// </summary>
-        public float Average { get; private set; } = 0f;
-
-        /// <summary>
-        /// Queue of samples in the moving window.
-        /// </summary>
-        private Queue<float> _samples;
-
-        /// <summary>
-        /// Create a new moving average with a given window size.
-        /// </summary>
-        /// <param name="capacity">The capacity of the sample window.</param>
-        public MovingAverage(int capacity)
+        /// <param name="period"></param>
+        public MovingAverage(int period)
         {
-            Capacity = capacity;
-            _samples = new Queue<float>(capacity);
+            this.period = period;
+            window = new float[period];
+            Clear();
         }
 
         /// <summary>
-        /// Clear the moving average and discard all cached samples.
+        /// Adds a new entry to the average, rmeoving the oldest if needed.
         /// </summary>
-        public void Clear()
+        /// <param name="sample"></param>
+        public void Push(float sample)
         {
-            _samples.Clear();
-            Average = 0f;
-        }
-
-        /// <summary>
-        /// Push a new sample and recalculate the current average.
-        /// </summary>
-        /// <param name="value">The new value to add.</param>
-        public void Push(float value)
-        {
-            var count = _samples.Count + 1;
-            if (count <= Capacity)
+            // Advance the insertion index.
+            if (this.numSamples != 0)
             {
-                Average += (value - Average) / count;
-                Debug.Assert(!float.IsNaN(Average));
-                _samples.Enqueue(value);
+                this.insertionIndex++;
+                if (this.insertionIndex == this.period)
+                {
+                    this.insertionIndex = 0;
+                }
+            }
+
+            if (this.numSamples < period)
+            {
+                this.numSamples++;
             }
             else
             {
-                var popValue = _samples.Dequeue();
-                Average += (value - popValue) / (count - 1);
-                _samples.Enqueue(value);
+                this.total -= this.window[this.insertionIndex];
+            }
+
+            this.window[this.insertionIndex] = sample;
+            this.total += sample;
+
+            Debug.Assert(!float.IsNaN(this.total));
+        }
+
+        /// <summary>
+        /// Resets the moving average and clears all samples.
+        /// </summary>
+        public void Clear()
+        {
+            this.total = 0;
+            this.numSamples = 0;
+            this.insertionIndex = 0;
+        }
+
+        /// <summary>
+        /// Gets the average value.
+        /// </summary>
+        public float Average
+        {
+            get
+            {
+                return this.numSamples > 0
+                    ? (this.total / this.numSamples)
+                    : 0;
             }
         }
     }
