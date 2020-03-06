@@ -1389,7 +1389,8 @@ mrsStatsReportGetObjects(mrsStatsReportHandle report_handle,
             irtp_stats.track_id.is_defined()) {
           auto& dest_stats = FindOrInsert(pending_stats, *irtp_stats.track_id);
           GetCommonValues(dest_stats, irtp_stats);
-          dest_stats.frames_decoded = GetValueIfDefined(irtp_stats.frames_decoded);
+          dest_stats.frames_decoded =
+              GetValueIfDefined(irtp_stats.frames_decoded);
         }
       } else if (!strcmp(stats.type(), "track")) {
         const auto& track_stats =
@@ -1431,3 +1432,4 @@ mrsResult MRS_CALL mrsStatsReportRemoveRef(mrsStatsReportHandle stats_report) {
   }
   return Result::kInvalidNativeHandle;
 }
+}  // namespace
