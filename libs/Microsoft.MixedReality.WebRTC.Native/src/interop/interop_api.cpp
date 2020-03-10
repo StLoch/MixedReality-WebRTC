@@ -1254,6 +1254,7 @@ void GetCommonValues(T& lhs, const webrtc::RTCInboundRTPStreamStats& rhs) {
   lhs.packets_received = GetValueIfDefined(rhs.packets_received);
   lhs.bytes_received = GetValueIfDefined(rhs.bytes_received);
 }
+}  // namespace
 
 mrsResult MRS_CALL
 mrsStatsReportGetObjects(mrsStatsReportHandle report_handle,
@@ -1432,4 +1433,3 @@ mrsResult MRS_CALL mrsStatsReportRemoveRef(mrsStatsReportHandle stats_report) {
   }
   return Result::kInvalidNativeHandle;
 }
-}  // namespace
