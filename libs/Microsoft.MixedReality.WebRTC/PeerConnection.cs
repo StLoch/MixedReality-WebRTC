@@ -1813,6 +1813,7 @@ namespace Microsoft.MixedReality.WebRTC
             return PeerConnectionInterop.GetSimpleStatsAsync(_nativePeerhandle);
         }
 
+        /// <summary>
         /// Triggers stats collection. Once collection is complete, the StatsUpdated event will fire.
         /// </summary>
         public void StartGetStats()
