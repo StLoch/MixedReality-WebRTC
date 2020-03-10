@@ -1820,7 +1820,8 @@ void AudioReadStream::Read(int sampleRate,
       if (haveFrame) {
         buffer_.addFrame(frame, sampleRate, channels);
       } else {
-        memset(dst, 0, dstLen);        
+        memset(dst, 0, dstLen);
+        dstLen = 0;
       }
 #else
       Frame frame;
