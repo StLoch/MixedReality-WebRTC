@@ -10,6 +10,18 @@
 #include "peer_connection.h"
 #include "rtc_base/refcountedobject.h"
 
+// This attempts to disable audio rendering, allowing higher levels to do things like spatial audio. For now,
+// There is a bug on UWP where it doesn't pass audio to the upper layer. Need to investigate, but atm just
+// let webrtc do it for us.
+#define DISABLE_AUTOMATIC_AUDIO_RENDERING 0
+
+// By default webrtc just crashes if there is any audio device it doesn't support well (RTC_CHECK(adm()); in
+// webrtcvoiceengine). For a while we were detecting this ourselves and installing a dummy ADM. For now I've
+// modified webrtc to just allow coreaudio even if not everything is supported
+// (webrtc\xplatform\webrtc\modules\audio_device\audio_device_impl.cc). One world is we create our own ADM to
+// Handle this all more gracefully?
+#define INSTALL_DUMMY_ADM_ON_EDGE_CASE 0
+
 namespace {
 
 using namespace Microsoft::MixedReality::WebRTC;
@@ -472,10 +484,6 @@ virtual int32_t EnableBuiltInNS(bool enable) {
 
 #endif
 
-// Because we are doing (we assume) spatial audio, we disable automatic
-// rendering of the audio.
-#define DISABLE_AUTOMATIC_AUDIO_RENDERING 1
-
 mrsResult GlobalFactory::Initialize() {
   RTC_CHECK(!factory_);
 
@@ -594,7 +602,7 @@ mrsResult GlobalFactory::Initialize() {
   webrtc::AudioMixer* mixer = nullptr;
 #endif
 
-
+#if INSTALL_DUMMY_ADM_ON_EDGE_CASE
   bool disableAudioToPreventNullADM =
       IsDeviceConnected(eCapture, {L"DENON", L"Kinect"}) ||
       IsDeviceConnected(eRender, {L"DENON", L"Kinect"});
@@ -614,6 +622,9 @@ mrsResult GlobalFactory::Initialize() {
               absl::make_unique<webrtc::InternalDecoderFactory>())),
         mixer, nullptr);
   } else {
+#else
+  {
+#endif
     rtc::scoped_refptr<webrtc::AudioDeviceModule> adm_ = nullptr;
     //rtc::scoped_refptr<webrtc::AudioDeviceModule> adm_ =
     //    webrtc::AudioDeviceModule::Create(
