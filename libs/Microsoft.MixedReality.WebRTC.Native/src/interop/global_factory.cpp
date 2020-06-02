@@ -13,7 +13,7 @@
 // This attempts to disable audio rendering, allowing higher levels to do things like spatial audio. For now,
 // There is a bug on UWP where it doesn't pass audio to the upper layer. Need to investigate, but atm just
 // let webrtc do it for us.
-#define DISABLE_AUTOMATIC_AUDIO_RENDERING 0
+#define DISABLE_AUTOMATIC_AUDIO_RENDERING 1
 
 // By default webrtc just crashes if there is any audio device it doesn't support well (RTC_CHECK(adm()); in
 // webrtcvoiceengine). For a while we were detecting this ourselves and installing a dummy ADM. For now I've
